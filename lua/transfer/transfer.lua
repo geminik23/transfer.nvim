@@ -99,6 +99,86 @@ end
 
 -- get the remote path for scp
 -- @param local_path string
+-- @return string, table
+function M.remote_scp_path(local_path)
+  local cwd = vim.loop.cwd()
+  local config_file = cwd .. "/.nvim/deployment.lua"
+  if vim.fn.filereadable(config_file) ~= 1 then
+    vim.notify(
+      "No deployment config found in \n" .. config_file .. "\n\nRun `:TransferInit` to create it",
+      vim.log.levels.WARN,
+      { title = "Transfer.nvim", icon = " ", timeout = 4000 }
+    )
+    return nil
+  end
+
+  local deployment_conf = dofile(config_file)
+  -- Remove cwd from local file path
+  local_path = normalize_local_path(local_path)
+
+  for name, deployment in pairs(deployment_conf) do
+    local skip = false
+    if deployment.excludedPaths ~= nil then
+      for _, excluded in pairs(deployment.excludedPaths) do
+        excluded = string.gsub(excluded, "^/", "")
+        if path_matches(local_path, excluded) then
+          vim.notify(
+            "File is excluded from deployment\non " .. name .. " by rule: " .. excluded,
+            vim.log.levels.WARN,
+            { title = "Excluded File", icon = " ", timeout = 4000 }
+          )
+          skip = true
+          break
+        end
+      end
+    end
+    if skip then
+      goto continue
+    end
+
+    for _, mapping in pairs(deployment.mappings) do
+      local mapped = mapping["local"]
+      local remote_file
+
+      if not mapped or mapped == "" or mapped == "/" or mapped == "." then
+        remote_file = mapping["remote"] or local_path
+        if remote_file:sub(-1) ~= "/" and local_path ~= "" then
+          remote_file = remote_file .. "/" .. local_path
+        else
+          remote_file = remote_file .. local_path
+        end
+      elseif path_matches(local_path, mapped) then
+        if local_path == mapped then
+          remote_file = mapping["remote"]
+        else
+          remote_file = mapping["remote"] .. string.sub(local_path, #mapped + 1)
+        end
+      end
+
+      if remote_file then
+        -- Ensure trailing slashes align with local_path
+        if local_path:sub(-1) == "/" and remote_file:sub(-1) ~= "/" then
+          remote_file = remote_file .. "/"
+        elseif local_path:sub(-1) ~= "/" and remote_file:sub(-1) == "/" then
+          remote_file = remote_file:sub(1, -2)
+        end
+        return build_scp_path(deployment, remote_file), deployment
+      end
+    end
+    ::continue::
+  end
+
+  vim.notify("File '" .. local_path .. "' is not mapped in deployment config", vim.log.levels.ERROR, {
+    title = "No Mappings Found",
+    icon = " ",
+    timeout = 4000,
+  })
+  return nil
+end
+
+
+-- get the remote path for scp
+-- @param local_path string
 -- @return string
 function M.remote_scp_path(local_path)
   local cwd = vim.loop.cwd()
